@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { listPRs } from '../lib/api';
+import { filterPRs } from '../lib/filter';
 import { parsePRRef } from '../lib/github';
 import { navigate } from '../lib/nav';
 import type { PRSummary } from '../types';
@@ -16,6 +17,8 @@ export function Home() {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [url, setUrl] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState('');
+  const filterInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -35,6 +38,22 @@ export function Home() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== '/') return;
+      const target = e.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
+      e.preventDefault();
+      filterInputRef.current?.focus();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const prs = state.kind === 'ok' ? state.prs : [];
+  const visible = useMemo(() => filterPRs(prs, filterQuery), [prs, filterQuery]);
+  const filtering = filterQuery.trim().length > 0;
 
   function startReview(owner: string, repo: string, prNumber: number) {
     const params = new URLSearchParams({ owner, repo, pr: String(prNumber) });
@@ -61,9 +80,39 @@ export function Home() {
       </header>
 
       <section className="mt-10 flex flex-col gap-3">
-        <h2 className="text-xs uppercase tracking-[0.05em] text-muted">
-          Open PRs — {DEFAULT_OWNER}/{DEFAULT_REPO}
-        </h2>
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-xs uppercase tracking-[0.05em] text-muted">
+            Open PRs — {DEFAULT_OWNER}/{DEFAULT_REPO}
+          </h2>
+          {state.kind === 'ok' && filtering && (
+            <span className="text-xs text-muted">
+              {visible.length} of {prs.length} matching
+            </span>
+          )}
+        </div>
+
+        {state.kind === 'ok' && prs.length > 0 && (
+          <div className="relative">
+            <input
+              ref={filterInputRef}
+              type="search"
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              placeholder="Filter by title, author, or number. Press / to focus."
+              className="h-11 w-full rounded-btn border border-border bg-surface px-4 pr-10 text-sm text-ink outline-none transition placeholder:text-muted focus:border-ink"
+            />
+            {filtering && (
+              <button
+                type="button"
+                aria-label="Clear filter"
+                onClick={() => setFilterQuery('')}
+                className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-btn text-muted hover:bg-hover hover:text-ink"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        )}
 
         {state.kind === 'loading' && <SkeletonRows />}
 
@@ -73,14 +122,20 @@ export function Home() {
           </p>
         )}
 
-        {state.kind === 'ok' && state.prs.length === 0 && (
+        {state.kind === 'ok' && prs.length === 0 && (
           <p className="rounded-card border border-border bg-surface px-5 py-4 text-sm text-muted">
             No open PRs right now. Paste a URL below to try it out.
           </p>
         )}
 
+        {state.kind === 'ok' && prs.length > 0 && visible.length === 0 && (
+          <p className="rounded-card border border-border bg-surface px-5 py-4 text-sm text-muted">
+            No PRs match "{filterQuery.trim()}".
+          </p>
+        )}
+
         {state.kind === 'ok' &&
-          state.prs.map((pr) => (
+          visible.map((pr) => (
             <button
               key={pr.number}
               type="button"
