@@ -3,7 +3,7 @@ import { ai } from '../genkit';
 import { PRSchema, PRSummarySchema, type PR, type PRSummary } from '../schemas/pr';
 
 const GITHUB_API = 'https://api.github.com';
-const MAX_PATCH_CHARS_PER_FILE = 8000;
+const MAX_PATCH_CHARS_PER_FILE = 4000;
 
 function headers() {
   const h: Record<string, string> = {
