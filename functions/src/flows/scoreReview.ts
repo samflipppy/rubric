@@ -11,8 +11,9 @@ import {
 import type { Question, Rubric } from '../schemas/rubric';
 
 function decideRecommendation(answers: Answer[]): Recommendation {
-  if (answers.some((a) => a.answer === 'no')) return 'request_changes';
-  if (answers.some((a) => a.answer === 'unsure')) return 'needs_human';
+  const has = (v: Answer['answer']) => answers.some((a) => a.answer === v);
+  if (has('unsure')) return 'needs_human';
+  if (has('no')) return 'request_changes';
   return 'approve';
 }
 
