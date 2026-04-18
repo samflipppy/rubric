@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { listPRs } from '../lib/api';
 import { parsePRRef } from '../lib/github';
 import { navigate } from '../lib/nav';
@@ -17,8 +17,9 @@ export function Home() {
   const [url, setUrl] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchPRs = useCallback(() => {
     let alive = true;
+    setState({ kind: 'loading' });
     listPRs(DEFAULT_OWNER, DEFAULT_REPO)
       .then((prs) => {
         if (alive) setState({ kind: 'ok', prs });
@@ -35,6 +36,8 @@ export function Home() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => fetchPRs(), [fetchPRs]);
 
   function startReview(owner: string, repo: string, prNumber: number) {
     const params = new URLSearchParams({ owner, repo, pr: String(prNumber) });
@@ -61,9 +64,19 @@ export function Home() {
       </header>
 
       <section className="mt-10 flex flex-col gap-3">
-        <h2 className="text-xs uppercase tracking-[0.05em] text-muted">
-          Open PRs — {DEFAULT_OWNER}/{DEFAULT_REPO}
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs uppercase tracking-[0.05em] text-muted">
+            Open PRs — {DEFAULT_OWNER}/{DEFAULT_REPO}
+          </h2>
+          <button
+            type="button"
+            onClick={fetchPRs}
+            disabled={state.kind === 'loading'}
+            className="text-xs uppercase tracking-[0.05em] text-muted hover:text-ink disabled:opacity-40"
+          >
+            Refresh
+          </button>
+        </div>
 
         {state.kind === 'loading' && <SkeletonRows />}
 
