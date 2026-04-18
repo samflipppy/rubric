@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+.DS_Store
+*.log
+.vscode/
+.idea/
+firebase-debug.log
+ui-debug.log
+.firebase/
+functions/lib/
+functions/.runtimeconfig.json
+web/dist/
+web/.env
