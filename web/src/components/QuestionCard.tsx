@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import type { Question } from '../types';
 import { TierBadge } from './TierBadge';
+import { DiffView } from './DiffView';
 
 interface Props {
   question: Question;
@@ -17,9 +19,7 @@ export function QuestionCard({ question, onAnswer }: Props) {
         <TierBadge tier={question.tier} />
         <h2 className="max-w-[32ch] text-xl font-medium text-ink">{question.question}</h2>
 
-        <pre className="max-h-[40dvh] overflow-auto rounded-card border border-border bg-surface px-4 py-3 font-mono text-[13px] leading-[1.55] text-ink">
-          {question.codeContext}
-        </pre>
+        <CollapsibleDiff key={question.id} code={question.codeContext} />
 
         <p className="max-w-[44ch] text-sm text-muted">{question.rationale}</p>
       </div>
@@ -51,5 +51,33 @@ export function QuestionCard({ question, onAnswer }: Props) {
         </button>
       </div>
     </section>
+  );
+}
+
+function CollapsibleDiff({ code }: { code: string }) {
+  const [open, setOpen] = useState(true);
+  const lineCount = code.split('\n').length;
+  return (
+    <div className="overflow-hidden rounded-card border border-border bg-surface">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-4 py-3 text-xs uppercase tracking-[0.05em] text-muted transition-colors hover:bg-hover"
+        aria-expanded={open}
+      >
+        <span>Code · {lineCount} {lineCount === 1 ? 'line' : 'lines'}</span>
+        <span
+          aria-hidden="true"
+          className={`inline-block text-base leading-none transition-transform ${open ? 'rotate-90' : ''}`}
+        >
+          ›
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-border">
+          <DiffView code={code} />
+        </div>
+      )}
+    </div>
   );
 }

@@ -41,7 +41,7 @@ const SHARED_RULES = `You are generating PR review questions for a senior engine
 
 Every question MUST:
 - Be a DECISION question, not a STATE or FACT question. You have already read the code; what you cannot do is judge whether the decision behind the code is right. Bad: "Does X handle null?" Good: "Null here throws TypeError. Is that the desired contract?"
-- Embed "codeContext": the actual diff the question is about, quoted verbatim (including +/- prefixes where relevant). Include WHATEVER LENGTH IS COHERENT — a couple of lines, a whole function, a whole file. The snippet must be complete enough that the reviewer can make the decision from it alone. Do not truncate with "...".
+- Embed "codeContext": the actual diff the question is about. Quote it in unified-diff format — every line starting with "+" (added), "-" (removed), " " (context), or "@@" (hunk header). Preserve the prefixes exactly as they appear in the PR diff. This is what lets the reviewer see what changed. Include WHATEVER LENGTH IS COHERENT — a couple of lines, a whole function, a whole file. The snippet must be complete enough that the reviewer can make the decision from it alone. Do not truncate with "...".
 - Be answerable by a senior engineer looking only at the snippet and the question text. If the question needs the reviewer to open another file or guess at context not in the snippet, either expand the snippet to include that context or discard the question.
 - Phrase the question so "yes" means the reviewer agrees with the decision, "no" means they disagree.
 - Keep question text under 180 characters.
