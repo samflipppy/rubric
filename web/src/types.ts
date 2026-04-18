@@ -6,7 +6,6 @@ export interface Question {
   question: string;
   rationale: string;
   codeContext: string;
-  expectedAnswer?: 'yes' | 'no';
   riskIfWrong: string;
 }
 

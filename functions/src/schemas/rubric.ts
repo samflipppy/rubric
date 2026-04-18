@@ -7,19 +7,18 @@ export const QuestionSchema = z.object({
   tier: QuestionTierSchema,
   question: z.string(),
   rationale: z.string(),
-  codeContext: z.string().describe('The diff the question is about, quoted verbatim. Whatever length is coherent: a couple of lines, a function, a whole file. The snippet must be complete enough that a reviewer can make the decision from it alone.'),
-  expectedAnswer: z.enum(['yes', 'no']).optional(),
+  codeContext: z.string().describe('The diff the question is about, quoted verbatim from the PR patch. Every line must appear in the raw diff. No added, paraphrased, or invented lines.'),
   riskIfWrong: z.string(),
 });
 
-export const QuestionDraftSchema = QuestionSchema.omit({ id: true, tier: true });
+export const QuestionDraftSchema = QuestionSchema.omit({ id: true });
 
 export const RubricSchema = z.object({
   prNumber: z.number(),
   prTitle: z.string(),
   prAuthor: z.string(),
   inferredIntent: z.string(),
-  questions: z.array(QuestionSchema).min(5).max(12),
+  questions: z.array(QuestionSchema).min(3).max(7),
 });
 
 export type QuestionTier = z.infer<typeof QuestionTierSchema>;

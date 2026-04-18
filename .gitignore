@@ -13,3 +13,4 @@ functions/lib/
 functions/.runtimeconfig.json
 web/dist/
 web/.env
+tmp-pr*.json

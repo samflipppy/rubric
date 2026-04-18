@@ -21,13 +21,17 @@ const IntentInferenceSchema = z.object({
 });
 
 const QuestionsListSchema = z.object({
-  questions: z.array(QuestionDraftSchema),
+  questions: z.array(QuestionDraftSchema.omit({ tier: true })),
 });
 
 function fileSummary(pr: PR): string {
   return pr.files
     .map((f) => `- ${f.filename} (${f.status}, +${f.additions} -${f.deletions})`)
     .join('\n');
+}
+
+function rawPatchText(pr: PR): string {
+  return pr.files.map((f) => f.patch ?? '').filter(Boolean).join('\n\n');
 }
 
 function patchBundle(pr: PR): string {
@@ -37,25 +41,16 @@ function patchBundle(pr: PR): string {
     .join('\n\n');
 }
 
-const SHARED_RULES = `You are generating PR review questions for a senior engineer. The reviewer is NOT reading the full diff. Each question stands alone with a small code snippet embedded in it. The reviewer has ~15 seconds per question.
+function isLineFaithful(line: string, haystack: string): boolean {
+  const trimmed = line.trimEnd();
+  if (trimmed === '') return true;
+  if (trimmed.startsWith('@@')) return true;
+  return haystack.includes(trimmed);
+}
 
-Every question MUST:
-- Be a DECISION question, not a STATE or FACT question. You have already read the code; what you cannot do is judge whether the decision behind the code is right. Bad: "Does X handle null?" Good: "Null here throws TypeError. Is that the desired contract?"
-- Embed "codeContext": the actual diff the question is about. Quote it in unified-diff format — every line starting with "+" (added), "-" (removed), " " (context), or "@@" (hunk header). Preserve the prefixes exactly as they appear in the PR diff. This is what lets the reviewer see what changed. Include WHATEVER LENGTH IS COHERENT — a couple of lines, a whole function, a whole file. The snippet must be complete enough that the reviewer can make the decision from it alone. Do not truncate with "...".
-- Be answerable by a senior engineer looking only at the snippet and the question text. If the question needs the reviewer to open another file or guess at context not in the snippet, either expand the snippet to include that context or discard the question.
-- Phrase the question so "yes" means the reviewer agrees with the decision, "no" means they disagree.
-- Keep question text under 180 characters.
-- Be distinct from other questions. Do not generate near-duplicates that rephrase the same decision.
-
-Forbidden question shapes:
-- "Does the PR modify files outside X?" (fact — you already know)
-- "Are the changes limited to Y?" (fact)
-- "Is there a bug?" (too vague)
-- "Is this safe?" (too vague)
-- Anything that asks the reviewer to verify what the code does instead of whether the decision is correct
-
-Rationale field: one line on what's AT STAKE if the reviewer gets this wrong. Not what the code does.
-RiskIfWrong field: what production impact happens if the reviewer approves a bad decision here.`;
+function contextIsFaithful(ctx: string, haystack: string): boolean {
+  return ctx.split('\n').every((line) => isLineFaithful(line, haystack));
+}
 
 function normalizeQuestion(s: string): string {
   return s
@@ -65,21 +60,51 @@ function normalizeQuestion(s: string): string {
     .trim();
 }
 
-function assignIds(drafts: QuestionDraft[], tier: QuestionTier, cap: number): Question[] {
+const SHARED_RULES = `You are generating PR review questions for a senior engineer. Each question stands alone with a small code snippet embedded in it. A post-check drops questions that violate the rules, so comply precisely.
+
+RULES:
+1. DECISION, NOT FACT OR STATE. Ask whether a decision behind the code is right, not whether the code does something. Bad: "Does X handle null?" Good: "Null here throws TypeError. Is throw the desired contract?"
+2. NO FABRICATION. codeContext must be quoted VERBATIM from the actual PR diff. Every line must exist character-for-character in the diff. Do not add comments, paraphrase, or invent lines. A substring check will drop unfaithful questions.
+3. NO TAUTOLOGIES. The question must have a genuine chance of being answered "no" by a thoughtful reviewer. If "no" would be absurd or the answer is obviously yes from just the title, drop the question.
+4. CODECONTEXT must use unified-diff format (lines prefixed with "+", "-", " ", or "@@"). Include whatever slice of the diff is needed for the decision.
+5. Question text under 180 characters. Phrase so "yes" = reviewer agrees with the decision, "no" = reviewer disagrees.
+6. Fields: question, rationale (one line on what is AT STAKE), codeContext, riskIfWrong (production impact if reviewer approves a bad decision).`;
+
+function selectFinal(candidates: QuestionDraft[], haystack: string): Question[] {
+  const faithful = candidates.filter((q) => q.codeContext && contextIsFaithful(q.codeContext, haystack));
+
   const seen = new Set<string>();
-  const unique: QuestionDraft[] = [];
-  for (const q of drafts) {
-    if (!q.codeContext?.trim()) continue;
+  const deduped: QuestionDraft[] = [];
+  for (const q of faithful) {
     const key = normalizeQuestion(q.question);
     if (seen.has(key)) continue;
     seen.add(key);
-    unique.push(q);
+    deduped.push(q);
   }
-  return unique.slice(0, cap).map((q, i) => ({
-    ...q,
-    tier,
-    id: `${tier}-${i + 1}`,
-  }));
+
+  const byTier: Record<QuestionTier, QuestionDraft[]> = { intent: [], behavioral: [], invariant: [] };
+  for (const q of deduped) byTier[q.tier].push(q);
+
+  const CAP_PER_TIER = 3;
+  const TOTAL_CAP = 7;
+  const order: QuestionTier[] = ['intent', 'behavioral', 'invariant'];
+
+  const chosen: QuestionDraft[] = [];
+  for (const tier of order) {
+    if (byTier[tier][0]) chosen.push(byTier[tier][0]);
+  }
+  for (const tier of order) {
+    for (let i = 1; i < byTier[tier].length && i < CAP_PER_TIER; i++) {
+      if (chosen.length >= TOTAL_CAP) break;
+      chosen.push(byTier[tier][i]);
+    }
+  }
+
+  const perTierIndex: Record<QuestionTier, number> = { intent: 0, behavioral: 0, invariant: 0 };
+  return chosen.map((q) => {
+    perTierIndex[q.tier] += 1;
+    return { ...q, id: `${q.tier}-${perTierIndex[q.tier]}` };
+  });
 }
 
 export const generateRubricFlow = ai.defineFlow(
@@ -91,6 +116,7 @@ export const generateRubricFlow = ai.defineFlow(
   async ({ owner, repo, prNumber }) => {
     const pr = await fetchPR(owner, repo, prNumber);
     const patches = patchBundle(pr);
+    const haystack = rawPatchText(pr);
     const files = fileSummary(pr);
     const body = pr.body ?? '(no description)';
 
@@ -101,11 +127,11 @@ ${body}
 Files changed:
 ${files}
 
-Code changes:
+Raw diff (quote from here only):
 ${patches}`;
 
     const intentInferencePromise = ai.generate({
-      prompt: `Read a pull request and state what it intends to do in one sentence. Be factual and specific. If the body is missing or vague, infer from the diff and file changes. Do not judge whether the PR is good.
+      prompt: `Read a pull request and state what it intends to do in one sentence. Be factual and specific.
 
 Title: ${pr.title}
 Body:
@@ -116,77 +142,58 @@ ${files}`,
       output: { schema: IntentInferenceSchema },
     });
 
-    const intentQPromise = ai.generate({
+    const intentPromise = ai.generate({
       prompt: `${SHARED_RULES}
 
-TIER FOCUS: scope and intent decisions.
-
-The PR's title and body claim a purpose. Look for SPECIFIC CHANGES in the diff that represent scope decisions: a touched file that doesn't obviously belong, a new behavior not mentioned in the body, a "while I was here" tweak, a renamed symbol, a dependency bump hiding inside a feature PR, a refactor next to a fix.
-
-Frame each question as: "This specific change is in the PR. Given the stated purpose, is this change in scope?" Include the relevant diff as codeContext at whatever length is coherent.
+TIER FOCUS: scope decisions. The PR claims a purpose. Look for specific changes in the diff that may not fit that scope: a touched file outside the stated area, new behavior not in the body, "while I was here" tweaks, renames, dependency bumps. Ask whether that specific change belongs, with the suspicious lines as codeContext.
 
 ${prContext}
 
-Generate 0-3 intent-tier questions. Only produce a question if a genuinely decision-worthy scope concern exists in the diff. If the diff is tightly scoped to the stated purpose, return an empty array.`,
+Generate 2-4 decision questions. Zero is acceptable if the diff is tightly scoped.`,
       output: { schema: QuestionsListSchema },
     });
 
-    const behavioralQPromise = ai.generate({
+    const behavioralPromise = ai.generate({
       prompt: `${SHARED_RULES}
 
-TIER FOCUS: runtime behavior decisions.
-
-Each question probes a concrete runtime decision visible in the diff. Use compressed Given-When-Then thinking, but do not write the question in Given-When-Then prose. Pick the specific change where a behavior decision was made and ask whether that decision is correct. Include whatever slice of the diff (a few lines, a function, or more) is needed to judge it.
-
-Good example: "Empty arrays raise 'got array' instead of iterating. Is that the right contract for callers who pass [] ?"
-Bad example: "When a user passes an empty array, does the function throw?" (that's a fact)
+TIER FOCUS: runtime-behavior decisions. Pick specific changes that encode a runtime decision and ask whether that decision is correct. Compressed Given-When-Then in framing, but not in prose. Example: "Null here throws TypeError instead of being treated as empty. Is throw the right contract?"
 
 ${prContext}
 
-Generate 3-5 behavioral-tier questions. Each must be rooted in specific diff lines — not a generic best-practice question.`,
+Generate 3-5 decision questions. Each rooted in specific diff lines.`,
       output: { schema: QuestionsListSchema },
     });
 
-    const invariantQPromise = ai.generate({
+    const invariantPromise = ai.generate({
       prompt: `${SHARED_RULES}
 
-TIER FOCUS: pattern decisions AI-generated code often gets wrong.
-
-Look for patterns that ACTUALLY appear in the diff (not hypothetical ones):
-- Silent catches that swallow errors and return fallback values
-- Loops invoking async I/O (N+1)
-- Happy-path bias: no null / error / empty handling where it matters
-- Convention drift: one function using a pattern different from its siblings
-- Removed telemetry, logging, error reporting
-- New abstractions or helpers that are unused or trivial
-- Hardcoded values that look like they should be config
-
-For each, ask whether the decision behind the pattern is correct. Good example: "The catch block returns [] on failure so the caller sees an empty list indistinguishable from no PRs. Is silent fallback the desired behavior?"
-Bad example: "Does the fetch handle errors?" (fact)
+TIER FOCUS: pattern decisions AI-generated code often gets wrong: silent catches, N+1, happy-path bias, convention drift, removed telemetry, trivial abstractions, hardcoded values. Only ask about patterns that ACTUALLY appear in the diff. Never invent a concern because the tier "needs coverage" — if the diff is clean on all categories, return zero questions.
 
 ${prContext}
 
-Generate 0-3 invariant-tier questions. Only produce a question if the pattern ACTUALLY appears in the diff. Do not invent concerns. If the diff is clean on all categories, return an empty array.`,
+Generate 0-4 decision questions.`,
       output: { schema: QuestionsListSchema },
     });
 
     const [intentInference, intentRaw, behavioralRaw, invariantRaw] = await Promise.all([
       intentInferencePromise,
-      intentQPromise,
-      behavioralQPromise,
-      invariantQPromise,
+      intentPromise,
+      behavioralPromise,
+      invariantPromise,
     ]);
     const inferredIntent = intentInference.output!.inferredIntent;
 
-    const questions = [
-      ...assignIds(intentRaw.output!.questions, 'intent', 3),
-      ...assignIds(behavioralRaw.output!.questions, 'behavioral', 5),
-      ...assignIds(invariantRaw.output!.questions, 'invariant', 3),
-    ].slice(0, 10);
+    const candidates: QuestionDraft[] = [
+      ...intentRaw.output!.questions.map((q) => ({ ...q, tier: 'intent' as const })),
+      ...behavioralRaw.output!.questions.map((q) => ({ ...q, tier: 'behavioral' as const })),
+      ...invariantRaw.output!.questions.map((q) => ({ ...q, tier: 'invariant' as const })),
+    ];
 
-    if (questions.length < 5) {
+    const questions = selectFinal(candidates, haystack);
+
+    if (questions.length < 3) {
       throw new Error(
-        `generateRubricFlow produced only ${questions.length} valid questions; need at least 5. Check the PR has enough signal and that codeContext was provided on each question.`,
+        `generateRubricFlow produced only ${questions.length} valid questions after filters (started with ${candidates.length} candidates). Need at least 3.`,
       );
     }
 
