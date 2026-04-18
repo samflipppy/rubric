@@ -50,7 +50,7 @@ ${patches}
 Produce three fields:
 - summary: one plain-English sentence on what the PR does. Concrete, specific to this change. Not "improves things" or "refactors code."
 - areas: 2-4 short phrases naming the FUNCTIONAL areas this PR touches. Think subsystems, flows, user-facing surfaces. NOT file paths. Examples: "PR list fetch", "session refresh flow", "tier badge styling", "verdict scoring logic".
-- riskSignal: one short phrase on scope. Pick something like: "small and isolated", "touches core business logic", "broad surface area across N files", "changes a public API contract", "single-function refactor". Factual, not hype.`,
+- riskSignal: one short phrase on scope. Examples of shape (do not copy verbatim): "small and isolated", "touches core business logic", "broad surface area across ${pr.files.length} files", "changes a public API contract", "single-function refactor". Always substitute concrete numbers/names for the specific PR; never emit placeholders like "N files" or "X lines" literally.`,
       output: { schema: BriefInferenceSchema },
     });
 
