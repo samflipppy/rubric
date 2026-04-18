@@ -5,7 +5,7 @@ export interface Question {
   tier: Tier;
   question: string;
   rationale: string;
-  codeContext?: string;
+  codeContext: string;
   expectedAnswer?: 'yes' | 'no';
   riskIfWrong: string;
 }

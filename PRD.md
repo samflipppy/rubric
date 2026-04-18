@@ -43,9 +43,8 @@ The entire v1 flow is three screens.
 
 **Review screen**
 - One question card visible at a time
-- Question in plain English, with a one-line rationale for why this question matters
-- Three actions: Yes / No / Show me the code
-- "Show me the code" expands a code snippet contextualizing the question
+- Each card shows: tier badge, question, the specific code snippet the question is about (always visible, not behind a peek), a one-line rationale for what's at stake, and Yes / No / Unsure actions
+- The code snippet is whatever slice of the diff the question is actually about: a few lines, a function, sometimes a whole file. No fixed line budget.
 - Progress bar at the top (e.g., "3 of 8")
 - Questions are ordered by tier: intent first, then behavioral, then invariant
 
@@ -59,28 +58,30 @@ Target: a reviewer completes a full review in under 2 minutes.
 
 ## 5. Question tiers
 
-Questions are generated in three tiers. The AI produces a mix, weighted by PR size and risk.
+Questions are generated in three tiers. Every question is a **decision question** paired with the specific code snippet it asks about. The AI has already read the code; the reviewer's job is judgment on the decision, not observation of state. Fact-lookup questions ("does the PR touch X?", "does this handle null?") are explicitly forbidden.
 
-**Intent (2 to 4 questions)**
+**Intent (0 to 3 questions)**
 Detects scope creep and AI drift. These are the most important because AI agents frequently bundle in changes not requested.
 
 Examples:
-- "The PR description says this adds password reset. Are all changes in this PR related to password reset?"
-- "This PR modifies 3 files outside `/auth/`. Is this expected?"
+- "This PR body says 'fix password reset,' but these lines add a new rate-limit decorator on the login route. Is that in scope?" *(code: the rate-limit diff)*
+- "The PR bumps a dependency from 4.1 to 5.0 alongside the feature change. Is the major-version bump intentional?" *(code: the dependency diff)*
 
-**Behavioral (3 to 6 questions)**
-Given-When-Then scenarios derived from the actual code changes. This is the core of the product.
-
-Examples:
-- "When a user with an expired session token hits `/refresh`, should they be logged out?"
-- "If the `email` field is null during signup, should the current behavior be to throw a 400?"
-
-**Invariant (2 to 4 questions)**
-Catches the AI-specific failure modes documented in the research (silent failures, happy-path bias, convention drift, swallowed exceptions, N+1 queries).
+**Behavioral (3 to 5 questions)**
+Runtime-behavior decisions rooted in specific diff lines. Compressed Given-When-Then thinking without the prose.
 
 Examples:
-- "This PR adds a database query inside a loop over `users`. Is this intentional?"
-- "Error handling on line 47 swallows the exception silently. Is that desired?"
+- "Null values throw a TypeError here instead of being treated as empty query. Is throw the right API contract?" *(code: the null-check)*
+- "On expired-session refresh, this returns 401 without clearing the cookie. Is that the intended client-facing behavior?" *(code: the refresh handler)*
+
+**Invariant (0 to 3 questions)**
+Pattern decisions AI-generated code often gets wrong: silent catches, N+1, happy-path bias, convention drift, removed telemetry, trivial abstractions.
+
+Examples:
+- "The catch block returns [] so callers can't distinguish 'no PRs' from 'GitHub is down.' Is silent fallback the desired behavior?" *(code: the catch block)*
+- "This async work sits inside a users.map loop, one request per user. Is the N+1 acceptable at current scale?" *(code: the loop)*
+
+Final filter: every generated question must be answerable by a senior engineer looking only at its code snippet and the question text. If it's not, the generator drops it.
 
 ## 6. v1 scope
 
@@ -90,8 +91,7 @@ Examples:
 - Fetch PR details and file diffs via public GitHub API (unauthenticated, 60 req/hr is fine for demo)
 - Support pasting any public GitHub PR URL
 - Generate a rubric of 5 to 12 questions via a Genkit flow
-- Review UI with one-question-at-a-time card flow
-- "Show me the code" peek component
+- Review UI with one-question-at-a-time card flow, code snippet always visible in each card
 - Verdict screen with copy-to-clipboard
 - Deployed to Firebase Hosting with Functions backend
 - Responsive design, 375px minimum (mobile-first per `rubric-ui.md`)
@@ -197,11 +197,11 @@ export const QuestionTierSchema = z.enum(['intent', 'behavioral', 'invariant']);
 export const QuestionSchema = z.object({
   id: z.string(),
   tier: QuestionTierSchema,
-  question: z.string(),                // plain-English yes/no question
-  rationale: z.string(),               // one line: why this question matters
-  codeContext: z.string().optional(),  // snippet shown on "show me the code"
+  question: z.string(),                // plain-English yes/no decision question
+  rationale: z.string(),               // one line: what's at stake
+  codeContext: z.string(),             // diff slice the question is about; always rendered in the card
   expectedAnswer: z.enum(['yes', 'no']).optional(), // AI's best guess
-  riskIfWrong: z.string(),             // what breaks if answered wrong
+  riskIfWrong: z.string(),             // production impact if the reviewer approves a bad decision
 });
 
 export const RubricSchema = z.object({
@@ -294,8 +294,7 @@ Rate limit: 60 requests/hour unauthenticated. Sufficient for demo. If a GitHub P
 **Review page (`/review`)**
 - On mount: calls `generateRubricFlow` with the params. Shows a loading state with progress messages ("Fetching PR... Analyzing intent... Generating questions...").
 - Once loaded: renders one `QuestionCard` at a time.
-- QuestionCard shows: tier badge (intent/behavioral/invariant with color coding), question text, rationale, three buttons (Yes / No / Show me the code).
-- "Show me the code" expands the `codeContext` inline with syntax highlighting.
+- QuestionCard shows: tier badge, decision-framed question, the `codeContext` snippet (always visible, monospace block, scrolls internally if long), one-line rationale, and Yes / No buttons with Unsure as a tertiary text link.
 - Answering advances to the next card.
 - ProgressBar at top: "3 of 8".
 - When all questions answered: call `scoreReviewFlow`, navigate to `/verdict`.

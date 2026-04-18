@@ -37,6 +37,26 @@ function patchBundle(pr: PR): string {
     .join('\n\n');
 }
 
+const SHARED_RULES = `You are generating PR review questions for a senior engineer. The reviewer is NOT reading the full diff. Each question stands alone with a small code snippet embedded in it. The reviewer has ~15 seconds per question.
+
+Every question MUST:
+- Be a DECISION question, not a STATE or FACT question. You have already read the code; what you cannot do is judge whether the decision behind the code is right. Bad: "Does X handle null?" Good: "Null here throws TypeError. Is that the desired contract?"
+- Embed "codeContext": the actual diff the question is about, quoted verbatim (including +/- prefixes where relevant). Include WHATEVER LENGTH IS COHERENT — a couple of lines, a whole function, a whole file. The snippet must be complete enough that the reviewer can make the decision from it alone. Do not truncate with "...".
+- Be answerable by a senior engineer looking only at the snippet and the question text. If the question needs the reviewer to open another file or guess at context not in the snippet, either expand the snippet to include that context or discard the question.
+- Phrase the question so "yes" means the reviewer agrees with the decision, "no" means they disagree.
+- Keep question text under 180 characters.
+- Be distinct from other questions. Do not generate near-duplicates that rephrase the same decision.
+
+Forbidden question shapes:
+- "Does the PR modify files outside X?" (fact — you already know)
+- "Are the changes limited to Y?" (fact)
+- "Is there a bug?" (too vague)
+- "Is this safe?" (too vague)
+- Anything that asks the reviewer to verify what the code does instead of whether the decision is correct
+
+Rationale field: one line on what's AT STAKE if the reviewer gets this wrong. Not what the code does.
+RiskIfWrong field: what production impact happens if the reviewer approves a bad decision here.`;
+
 function normalizeQuestion(s: string): string {
   return s
     .toLowerCase()
@@ -49,6 +69,7 @@ function assignIds(drafts: QuestionDraft[], tier: QuestionTier, cap: number): Qu
   const seen = new Set<string>();
   const unique: QuestionDraft[] = [];
   for (const q of drafts) {
+    if (!q.codeContext?.trim()) continue;
     const key = normalizeQuestion(q.question);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -73,6 +94,16 @@ export const generateRubricFlow = ai.defineFlow(
     const files = fileSummary(pr);
     const body = pr.body ?? '(no description)';
 
+    const prContext = `PR title: ${pr.title}
+PR body:
+${body}
+
+Files changed:
+${files}
+
+Code changes:
+${patches}`;
+
     const intentInferencePromise = ai.generate({
       prompt: `Read a pull request and state what it intends to do in one sentence. Be factual and specific. If the body is missing or vague, infer from the diff and file changes. Do not judge whether the PR is good.
 
@@ -86,81 +117,56 @@ ${files}`,
     });
 
     const intentQPromise = ai.generate({
-      prompt: `You are helping a human reviewer catch scope creep and AI drift in a pull request.
+      prompt: `${SHARED_RULES}
 
-PR title: ${pr.title}
-PR body:
-${body}
+TIER FOCUS: scope and intent decisions.
 
-Files changed:
-${files}
+The PR's title and body claim a purpose. Look for SPECIFIC CHANGES in the diff that represent scope decisions: a touched file that doesn't obviously belong, a new behavior not mentioned in the body, a "while I was here" tweak, a renamed symbol, a dependency bump hiding inside a feature PR, a refactor next to a fix.
 
-Generate 2-4 YES/NO questions the reviewer should answer to verify the PR matches what its title and body claim, and does not bundle in unrelated changes. Focus on:
-- Does the PR touch files or subsystems outside what the title and body describe?
-- Does the PR introduce new behavior not mentioned in the body?
-- Are there renamings, refactors, or dependency bumps hiding inside a feature PR?
+Frame each question as: "This specific change is in the PR. Given the stated purpose, is this change in scope?" Include the relevant diff as codeContext at whatever length is coherent.
 
-For each question:
-- Phrase so "yes" means the PR is fine on this axis, "no" means the reviewer has a concern.
-- Keep the question concrete and specific to this PR (name files or symbols).
-- Keep the question text under 180 characters.
-- Each question must probe a distinct aspect. Do not generate near-duplicates that only rephrase the same check.
-- One-line rationale explaining why this question matters for an AI-generated PR.
-- A "riskIfWrong" field describing what breaks in production if answered incorrectly.
-- Skip codeContext for intent-tier questions unless one specific change is the smoking gun.`,
+${prContext}
+
+Generate 0-3 intent-tier questions. Only produce a question if a genuinely decision-worthy scope concern exists in the diff. If the diff is tightly scoped to the stated purpose, return an empty array.`,
       output: { schema: QuestionsListSchema },
     });
 
     const behavioralQPromise = ai.generate({
-      prompt: `You are generating behavioral review questions for a pull request. Use Given-When-Then reasoning to probe the actual behavior of the diff.
+      prompt: `${SHARED_RULES}
 
-PR title: ${pr.title}
-PR body:
-${body}
+TIER FOCUS: runtime behavior decisions.
 
-Code changes:
-${patches}
+Each question probes a concrete runtime decision visible in the diff. Use compressed Given-When-Then thinking, but do not write the question in Given-When-Then prose. Pick the specific change where a behavior decision was made and ask whether that decision is correct. Include whatever slice of the diff (a few lines, a function, or more) is needed to judge it.
 
-Generate 3-6 YES/NO questions rooted in the ACTUAL code changes (not generic best-practice questions). Each question should:
-- Describe a concrete runtime scenario: "When X happens, should Y?"
-- Be phrased so "yes" = expected behavior matches what the reviewer expects, "no" = concern.
-- Keep the question text under 180 characters.
-- Each question must probe a distinct aspect. Do not generate near-duplicates that only rephrase the same check.
-- Include a one-line rationale naming the specific code path it's probing.
-- Include a "riskIfWrong" describing the production impact.
-- Include "codeContext": 5-15 lines of the relevant diff, quoted, so the reviewer can peek. Only include the lines that matter for this specific question.
+Good example: "Empty arrays raise 'got array' instead of iterating. Is that the right contract for callers who pass [] ?"
+Bad example: "When a user passes an empty array, does the function throw?" (that's a fact)
 
-Prefer questions that would only make sense for THIS PR (not ones that could apply to any PR).`,
+${prContext}
+
+Generate 3-5 behavioral-tier questions. Each must be rooted in specific diff lines — not a generic best-practice question.`,
       output: { schema: QuestionsListSchema },
     });
 
     const invariantQPromise = ai.generate({
-      prompt: `You are generating invariant-check questions for a pull request. Your job is to catch the specific failure modes that AI-generated code frequently exhibits.
+      prompt: `${SHARED_RULES}
 
-Look hard for:
-- Silent failures and swallowed exceptions (catch blocks that don't rethrow, log, or handle meaningfully)
-- N+1 query patterns (loops invoking async I/O or data-fetching functions)
-- Happy-path bias (no null / error / empty / boundary handling where it's needed)
-- Convention drift (one function using a pattern different from siblings in the same file)
-- Removed or skipped logging, telemetry, or error reporting
-- New abstractions or helper layers that are unused or trivial
-- Hardcoded values that look like they should be config or env vars
+TIER FOCUS: pattern decisions AI-generated code often gets wrong.
 
-PR title: ${pr.title}
+Look for patterns that ACTUALLY appear in the diff (not hypothetical ones):
+- Silent catches that swallow errors and return fallback values
+- Loops invoking async I/O (N+1)
+- Happy-path bias: no null / error / empty handling where it matters
+- Convention drift: one function using a pattern different from its siblings
+- Removed telemetry, logging, error reporting
+- New abstractions or helpers that are unused or trivial
+- Hardcoded values that look like they should be config
 
-Code changes:
-${patches}
+For each, ask whether the decision behind the pattern is correct. Good example: "The catch block returns [] on failure so the caller sees an empty list indistinguishable from no PRs. Is silent fallback the desired behavior?"
+Bad example: "Does the fetch handle errors?" (fact)
 
-Generate 2-4 YES/NO questions. Each should:
-- Name the specific file (and line range if possible) where the pattern appears.
-- Be phrased so "yes" = the pattern is intentional and fine, "no" = reviewer wants it changed.
-- Keep the question text under 180 characters.
-- Each question must probe a distinct aspect. Do not generate near-duplicates that only rephrase the same check.
-- Include rationale naming the failure mode category.
-- Include "riskIfWrong": what this looks like in production.
-- Include "codeContext": the quoted 5-15 lines of code the question is about.
+${prContext}
 
-Do not invent problems that aren't in the diff. If the diff is clean on a category, skip it.`,
+Generate 0-3 invariant-tier questions. Only produce a question if the pattern ACTUALLY appears in the diff. Do not invent concerns. If the diff is clean on all categories, return an empty array.`,
       output: { schema: QuestionsListSchema },
     });
 
@@ -173,14 +179,14 @@ Do not invent problems that aren't in the diff. If the diff is clean on a catego
     const inferredIntent = intentInference.output!.inferredIntent;
 
     const questions = [
-      ...assignIds(intentRaw.output!.questions, 'intent', 4),
-      ...assignIds(behavioralRaw.output!.questions, 'behavioral', 6),
-      ...assignIds(invariantRaw.output!.questions, 'invariant', 4),
-    ].slice(0, 12);
+      ...assignIds(intentRaw.output!.questions, 'intent', 3),
+      ...assignIds(behavioralRaw.output!.questions, 'behavioral', 5),
+      ...assignIds(invariantRaw.output!.questions, 'invariant', 3),
+    ].slice(0, 10);
 
     if (questions.length < 5) {
       throw new Error(
-        `generateRubricFlow produced only ${questions.length} questions; need at least 5. Check the PR has enough signal.`,
+        `generateRubricFlow produced only ${questions.length} valid questions; need at least 5. Check the PR has enough signal and that codeContext was provided on each question.`,
       );
     }
 

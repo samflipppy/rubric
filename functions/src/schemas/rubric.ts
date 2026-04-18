@@ -7,7 +7,7 @@ export const QuestionSchema = z.object({
   tier: QuestionTierSchema,
   question: z.string(),
   rationale: z.string(),
-  codeContext: z.string().optional(),
+  codeContext: z.string().describe('The diff the question is about, quoted verbatim. Whatever length is coherent: a couple of lines, a function, a whole file. The snippet must be complete enough that a reviewer can make the decision from it alone.'),
   expectedAnswer: z.enum(['yes', 'no']).optional(),
   riskIfWrong: z.string(),
 });

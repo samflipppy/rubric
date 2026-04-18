@@ -1,7 +1,5 @@
-import { useState } from 'react';
 import type { Question } from '../types';
 import { TierBadge } from './TierBadge';
-import { CodePeek } from './CodePeek';
 
 interface Props {
   question: Question;
@@ -9,32 +7,24 @@ interface Props {
 }
 
 export function QuestionCard({ question, onAnswer }: Props) {
-  const [peek, setPeek] = useState(false);
-  const hasCode = Boolean(question.codeContext);
-
   return (
     <section
-      className="flex flex-col gap-8"
+      className="flex flex-col gap-6"
       role="group"
       aria-label={`${question.tier} question: ${question.question}`}
     >
       <div className="flex flex-col gap-5">
         <TierBadge tier={question.tier} />
-        <h2 className="max-w-[28ch] text-xl font-medium text-ink">{question.question}</h2>
-        <p className="max-w-[40ch] text-sm text-muted">{question.rationale}</p>
+        <h2 className="max-w-[32ch] text-xl font-medium text-ink">{question.question}</h2>
+
+        <pre className="max-h-[40dvh] overflow-auto rounded-card border border-border bg-surface px-4 py-3 font-mono text-[13px] leading-[1.55] text-ink">
+          {question.codeContext}
+        </pre>
+
+        <p className="max-w-[44ch] text-sm text-muted">{question.rationale}</p>
       </div>
 
       <div className="flex flex-col gap-3">
-        {hasCode && (
-          <button
-            type="button"
-            onClick={() => setPeek(true)}
-            className="h-11 w-full rounded-btn border border-border bg-surface text-base text-ink transition active:scale-[0.98] hover:bg-hover"
-          >
-            Show me the code
-          </button>
-        )}
-
         <div className="flex gap-3">
           <button
             type="button"
@@ -60,8 +50,6 @@ export function QuestionCard({ question, onAnswer }: Props) {
           Unsure
         </button>
       </div>
-
-      <CodePeek open={peek} code={question.codeContext ?? ''} onClose={() => setPeek(false)} />
     </section>
   );
 }
