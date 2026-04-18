@@ -10,7 +10,7 @@ async function callGenkit<T>(name: string, data: unknown): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${name} failed: ${res.status} ${text}`);
+    throw new Error(`Error in ${name}: [${res.status}] ${text}`);
   }
   const body = await res.json();
   return body.result as T;

@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react';
 import { listPRs } from '../lib/api';
 import { parsePRRef } from '../lib/github';
 import { navigate } from '../lib/nav';
+import {
+  favoriteStateForPRs,
+  isFavorite,
+  removeFavorite,
+  saveFavorite,
+} from '../lib/favorites';
 import type { PRSummary } from '../types';
 
 const DEFAULT_OWNER = import.meta.env.VITE_DEFAULT_OWNER as string;
@@ -16,17 +22,26 @@ export function Home() {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [url, setUrl] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [favoriteFlags, setFavoriteFlags] = useState<boolean[]>([]);
 
   useEffect(() => {
     let alive = true;
     listPRs(DEFAULT_OWNER, DEFAULT_REPO)
       .then((prs) => {
-        if (alive) setState({ kind: 'ok', prs });
+        if (alive) {
+          setState({ kind: 'ok', prs });
+          const refs = prs.map((p) => ({
+            owner: DEFAULT_OWNER,
+            repo: DEFAULT_REPO,
+            prNumber: p.number,
+          }));
+          setFavoriteFlags(favoriteStateForPRs(refs));
+        }
       })
       .catch((err: Error) => {
         if (alive) {
           const message = err.message.includes('403')
-            ? 'GitHub is rate limiting us. Paste a URL to continue.'
+            ? `Error in listPRs: [${err.message}]`
             : err.message;
           setState({ kind: 'error', message });
         }
@@ -39,6 +54,23 @@ export function Home() {
   function startReview(owner: string, repo: string, prNumber: number) {
     const params = new URLSearchParams({ owner, repo, pr: String(prNumber) });
     navigate(`/brief?${params.toString()}`);
+  }
+
+  function toggleFavorite(prNumber: number, index: number) {
+    const currentlyFav = isFavorite(DEFAULT_OWNER, DEFAULT_REPO, prNumber);
+    if (currentlyFav) {
+      removeFavorite(DEFAULT_OWNER, DEFAULT_REPO, prNumber);
+    } else {
+      saveFavorite({
+        owner: DEFAULT_OWNER,
+        repo: DEFAULT_REPO,
+        prNumber,
+        favoritedAt: Date.now(),
+      });
+    }
+    const next = [...favoriteFlags];
+    next[index] = !currentlyFav;
+    setFavoriteFlags(next);
   }
 
   function submitUrl() {
@@ -80,21 +112,33 @@ export function Home() {
         )}
 
         {state.kind === 'ok' &&
-          state.prs.map((pr) => (
-            <button
+          state.prs.map((pr, i) => (
+            <div
               key={pr.number}
-              type="button"
-              onClick={() => startReview(DEFAULT_OWNER, DEFAULT_REPO, pr.number)}
-              className="flex flex-col gap-1 rounded-card border border-border bg-surface px-5 py-4 text-left transition hover:bg-hover active:scale-[0.995]"
+              className="flex items-stretch gap-2 rounded-card border border-border bg-surface transition hover:bg-hover"
             >
-              <span className="text-lg font-medium text-ink">
-                #{pr.number} {pr.title}
-              </span>
-              <span className="text-xs text-muted">
-                {pr.fileCount} file{pr.fileCount === 1 ? '' : 's'} · +{pr.additions} −{pr.deletions}
-              </span>
-              <span className="text-xs text-muted">@{pr.author}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => startReview(DEFAULT_OWNER, DEFAULT_REPO, pr.number)}
+                className="flex flex-1 flex-col gap-1 px-5 py-4 text-left active:scale-[0.995]"
+              >
+                <span className="text-lg font-medium text-ink">
+                  #{pr.number} {pr.title}
+                </span>
+                <span className="text-xs text-muted">
+                  {pr.fileCount} file{pr.fileCount === 1 ? '' : 's'} · +{pr.additions} −{pr.deletions}
+                </span>
+                <span className="text-xs text-muted">@{pr.author}</span>
+              </button>
+              <button
+                type="button"
+                aria-label={favoriteFlags[i] ? 'Unfavorite' : 'Favorite'}
+                onClick={() => toggleFavorite(pr.number, i)}
+                className="flex w-12 items-center justify-center text-lg text-muted hover:text-ink"
+              >
+                {favoriteFlags[i] ? '★' : '☆'}
+              </button>
+            </div>
           ))}
       </section>
 

@@ -17,7 +17,7 @@ export function QuestionCard({ question, onAnswer }: Props) {
     >
       <div className="flex flex-col gap-5">
         <TierBadge tier={question.tier} />
-        <h2 className="max-w-[32ch] text-xl font-medium text-ink">{question.question}</h2>
+        <h2 className="max-w-[32ch] text-2xl font-medium text-ink">{question.question}</h2>
 
         <CollapsibleDiff key={question.id} code={question.codeContext} />
 
