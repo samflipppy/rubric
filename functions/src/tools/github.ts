@@ -42,23 +42,38 @@ interface RawFile {
 }
 
 export async function listOpenPRs(owner: string, repo: string): Promise<PRSummary[]> {
-  const raw = await gh<(RawPR & { additions?: number; deletions?: number; changed_files?: number })[]>(
-    `/repos/${owner}/${repo}/pulls?state=open&per_page=20`,
-  );
+  let raw: (RawPR & { additions?: number; deletions?: number; changed_files?: number })[] = [];
+  try {
+    raw = await gh(`/repos/${owner}/${repo}/pulls?state=open&per_page=20`);
+  } catch {
+    return [];
+  }
   const summaries = await Promise.all(
     raw.map(async (pr) => {
-      const files = await gh<RawFile[]>(`/repos/${owner}/${repo}/pulls/${pr.number}/files?per_page=100`);
-      const additions = files.reduce((s, f) => s + f.additions, 0);
-      const deletions = files.reduce((s, f) => s + f.deletions, 0);
-      return PRSummarySchema.parse({
-        number: pr.number,
-        title: pr.title,
-        author: pr.user?.login ?? 'unknown',
-        url: pr.html_url,
-        fileCount: files.length,
-        additions,
-        deletions,
-      });
+      try {
+        const files = await gh<RawFile[]>(`/repos/${owner}/${repo}/pulls/${pr.number}/files?per_page=100`);
+        const additions = files.reduce((s, f) => s + f.additions, 0);
+        const deletions = files.reduce((s, f) => s + f.deletions, 0);
+        return PRSummarySchema.parse({
+          number: pr.number,
+          title: pr.title,
+          author: pr.user?.login ?? 'unknown',
+          url: pr.html_url,
+          fileCount: files.length,
+          additions,
+          deletions,
+        });
+      } catch {
+        return PRSummarySchema.parse({
+          number: pr.number,
+          title: pr.title,
+          author: pr.user?.login ?? 'unknown',
+          url: pr.html_url,
+          fileCount: 0,
+          additions: 0,
+          deletions: 0,
+        });
+      }
     }),
   );
   return summaries;
