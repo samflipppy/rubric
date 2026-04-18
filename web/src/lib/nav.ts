@@ -1,8 +1,10 @@
-export type View = 'home' | 'review' | 'verdict';
+export type View = 'home' | 'brief' | 'review' | 'ask' | 'decide';
 
 export function viewFromPath(pathname: string): View {
+  if (pathname.startsWith('/brief')) return 'brief';
   if (pathname.startsWith('/review')) return 'review';
-  if (pathname.startsWith('/verdict')) return 'verdict';
+  if (pathname.startsWith('/ask')) return 'ask';
+  if (pathname.startsWith('/decide')) return 'decide';
   return 'home';
 }
 

@@ -1,4 +1,4 @@
-import type { PRSummary, Rubric, Answer, Verdict } from '../types';
+import type { PRSummary, Rubric, Brief, ChatMessage } from '../types';
 
 const BASE = import.meta.env.VITE_FUNCTIONS_URL as string;
 
@@ -26,10 +26,24 @@ export async function listPRs(owner: string, repo: string): Promise<PRSummary[]>
   return body.prs as PRSummary[];
 }
 
+export function generateBrief(args: { owner: string; repo: string; prNumber: number }): Promise<Brief> {
+  return callGenkit<Brief>('generateBrief', args);
+}
+
 export function generateRubric(args: { owner: string; repo: string; prNumber: number }): Promise<Rubric> {
   return callGenkit<Rubric>('generateRubric', args);
 }
 
-export function scoreReview(args: { rubric: Rubric; answers: Answer[] }): Promise<Verdict> {
-  return callGenkit<Verdict>('scoreReview', args);
+export interface AskResponse {
+  answer: string;
+  codeReferences: string[];
+}
+
+export function answerPRQuestion(args: {
+  owner: string;
+  repo: string;
+  prNumber: number;
+  messages: Array<{ role: ChatMessage['role']; content: string }>;
+}): Promise<AskResponse> {
+  return callGenkit<AskResponse>('answerPRQuestion', args);
 }

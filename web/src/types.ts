@@ -27,23 +27,35 @@ export interface PRSummary {
   deletions: number;
 }
 
+export interface Brief {
+  prNumber: number;
+  prTitle: string;
+  prAuthor: string;
+  prUrl: string;
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  summary: string;
+  areas: string[];
+  riskSignal: string;
+}
+
 export type Answer = {
   questionId: string;
   answer: 'yes' | 'no' | 'unsure';
   note?: string;
 };
 
-export type Recommendation = 'approve' | 'request_changes' | 'needs_human';
+export type Decision = 'approve' | 'request_changes' | 'unsure';
 
-export interface Concern {
-  questionId: string;
-  concern: string;
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  codeReferences?: string[];
 }
 
-export interface Verdict {
-  recommendation: Recommendation;
-  headline: string;
-  summary: string;
-  concerns: Concern[];
-  auditTrailMarkdown: string;
+export interface PRRef {
+  owner: string;
+  repo: string;
+  prNumber: number;
 }

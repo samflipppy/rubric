@@ -38,7 +38,7 @@ export function Home() {
 
   function startReview(owner: string, repo: string, prNumber: number) {
     const params = new URLSearchParams({ owner, repo, pr: String(prNumber) });
-    navigate(`/review?${params.toString()}`);
+    navigate(`/brief?${params.toString()}`);
   }
 
   function submitUrl() {
